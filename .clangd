@@ -1,0 +1,2 @@
+CompileFlags:
+  CompilationDatabase: ./FlexFlow/build  # 指定compile_commands.json所在目录

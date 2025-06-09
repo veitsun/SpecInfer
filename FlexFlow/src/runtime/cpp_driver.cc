@@ -26,12 +26,16 @@ using namespace FlexFlow;
 int main(int argc, char **argv) {
   // This needs to be set, otherwise NCCL will try to use group kernel launches,
   // which are not compatible with the Realm CUDA hijack.
+  // 设置 NCCL 的启动模式
   setenv("NCCL_LAUNCH_MODE", "PARALLEL", true);
 
+  // 设置 Legion 的运行时环境，定义计算执行约束和并行策略
   Runtime::set_top_level_task_id(TOP_LEVEL_TASK_ID);
   {
     TaskVariantRegistrar registrar(TOP_LEVEL_TASK_ID, "top_level");
+    // 指定任务在 CPU 处理器上运行
     registrar.add_constraint(ProcessorConstraint(Processor::LOC_PROC));
+    // 允许任务在多个处理器上复制执行
     registrar.set_replicable();
     Runtime::preregister_task_variant<top_level_task>(registrar, "top_level");
   }
@@ -41,6 +45,9 @@ int main(int argc, char **argv) {
   // Register custom tasks
   register_custom_tasks();
 
+  // Mapper 负责将任务映射到具体的处理器，决定数据在哪个 GPU/CPU 上处理
   Runtime::add_registration_callback(FFMapper::update_mappers);
+
+  // 将控制权交给 Legion 运行时系统
   return Runtime::start(argc, argv);
 }

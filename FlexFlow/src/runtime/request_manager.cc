@@ -184,7 +184,7 @@ size_t RequestManager::get_num_ssms() {
 RequestManager::RequestGuid
     RequestManager::register_new_request(std::vector<TokenId> const &prompt,
                                          int max_sequence_length) {
-  const std::lock_guard<std::mutex> lock(request_queue_mutex);
+  std::lock_guard<std::mutex> const lock(request_queue_mutex);
 
   // Add a new request
   Request request;
@@ -200,29 +200,38 @@ RequestManager::RequestGuid
     printf("tokens size: %zu\n", request.tokens.size());
     return INVALID_GUID;
   } else {
+    // 如果符合规范就将 prompt 保存在请求对象 tokens 属性中
     request.initial_len = prompt.size();
     request.tokens = prompt;
   }
 
+  // 这里处理小模型推测模型
   if (get_num_ssms() == 0) {
     std::cout << "No small speculative model registered, using incremental "
                  "decoding."
               << std::endl;
   } else {
     std::cout << "Num of SSMs: " << get_num_ssms() << std::endl;
+    // 如果有多个小模型，则根据模型数量创建对应数量的 BeamTree
+    // 对象，并将他们加入到请求对象的 beam_trees 属性中
     for (int i = 0; i < get_num_ssms(); i++) {
       BeamTree beam_tree = BeamTree{};
       request.beam_trees.push_back(beam_tree);
     }
   }
 
+  // 将请求加入待处理队列，pending_request_queue 就是请求管理器对象的待处理队列
+  //   std::queue<Request> pending_request_queue; 放入一个个请求对象
   pending_request_queue.push(request);
   all_requests[request.guid] = request;
   {
-    const std::lock_guard<std::mutex> lock(request_to_promise_mutex);
-    request_to_promise[request.guid] = new std::promise<void>();
+    std::lock_guard<std::mutex> const lock(request_to_promise_mutex);
+    request_to_promise[request.guid] =
+        new std::promise<void>(); // std::promise 允许其他地方等待请求的处理结果
   }
 
+  // 如果是 true
+  // 的话，就会打印出该请求的详细请求信息，包括请求中包含的token数量和每个token的值
   if (verbose) {
     std::cout << "new req: " << request.tokens.size() << std::endl;
     for (int i = 0; i < request.tokens.size(); i++) {
@@ -230,6 +239,7 @@ RequestManager::RequestGuid
     }
   }
 
+  // 这部分代码创建了一个 GernerationResult 对象，并将其与请求的 guid 关联起来
   GenerationResult gr;
   gr.guid = request.guid;
   gr.input_text = "";
@@ -238,13 +248,14 @@ RequestManager::RequestGuid
   gr.output_tokens = prompt;
   request_generation_results[request.guid] = gr;
 
+  // 返回请求 的 guid
   return request.guid;
 }
 
 RequestManager::RequestGuid
     RequestManager::register_new_request(std::string const &prompt,
                                          int max_sequence_length) {
-  const std::lock_guard<std::mutex> lock(request_queue_mutex);
+  std::lock_guard<std::mutex> const lock(request_queue_mutex);
   // Add a new request
   Request request;
   request.status = Request::PENDING;
@@ -253,6 +264,8 @@ RequestManager::RequestGuid
   if (bos_token_id >= 0 && model_type != ModelType::FALCON) {
     request.tokens.push_back(bos_token_id);
   }
+  // 对 prompt 文本进行分词 （Tokenize）
+  // 调用成员变量 tokenizer_ 的 Encode 方法，将输入的 prompt 转为一串整数 token
   std::vector<int32_t> tokens = this->tokenizer_->Encode(prompt);
   if (tokens.size() >= get_max_sequence_length()) {
     std::cout << "Warning: too many tokens in prompt, only load up to "
@@ -280,10 +293,11 @@ RequestManager::RequestGuid
     }
   }
 
+  // 加入到待处理队列
   pending_request_queue.push(request);
   all_requests[request.guid] = request;
   {
-    const std::lock_guard<std::mutex> lock(request_to_promise_mutex);
+    std::lock_guard<std::mutex> const lock(request_to_promise_mutex);
     request_to_promise[request.guid] = new std::promise<void>();
   }
 
@@ -307,7 +321,7 @@ RequestManager::RequestGuid
 }
 
 bool RequestManager::is_request_completed(RequestGuid const &guid) {
-  const std::lock_guard<std::mutex> lock(request_queue_mutex);
+  std::lock_guard<std::mutex> const lock(request_queue_mutex);
   assert(all_requests.find(guid) != all_requests.end());
   Request const &request = all_requests[guid];
   // return request.tokens.size() >= request.max_sequence_length;
@@ -319,7 +333,7 @@ GenerationResult
   // First get the future of the request
   std::future<void> future;
   {
-    const std::lock_guard<std::mutex> lock(request_to_promise_mutex);
+    std::lock_guard<std::mutex> const lock(request_to_promise_mutex);
     assert(request_to_promise.find(guid) != request_to_promise.end());
     future = request_to_promise[guid]->get_future();
   }
@@ -327,7 +341,7 @@ GenerationResult
   future.get();
   // Get the generation result
   {
-    const std::lock_guard<std::mutex> lock(request_queue_mutex);
+    std::lock_guard<std::mutex> const lock(request_queue_mutex);
     assert(request_generation_results.find(guid) !=
            request_generation_results.end());
     return request_generation_results[guid];
@@ -365,7 +379,7 @@ BatchConfig RequestManager::prepare_next_batch_task(
 
 BatchConfig RequestManager::prepare_next_batch(BatchConfig const &old_bc,
                                                InferenceResult const &result) {
-  const std::lock_guard<std::mutex> lock(request_queue_mutex);
+  std::lock_guard<std::mutex> const lock(request_queue_mutex);
 
   // Step 1: append result from previous iteration to request's tokens
   for (int i = 0; i < old_bc.num_tokens; i++) {
@@ -591,7 +605,7 @@ BeamSearchBatchConfig
     RequestManager::prepare_next_batch_init(TreeVerifyBatchConfig const &old_bc,
                                             InferenceResult const &result,
                                             int model_id) {
-  const std::lock_guard<std::mutex> lock(request_queue_mutex);
+  std::lock_guard<std::mutex> const lock(request_queue_mutex);
   if (verbose) {
     std::cout << "\n############### prepare_next_batch_init ###############\n";
   }
@@ -1026,7 +1040,7 @@ BeamSearchBatchConfig RequestManager::prepare_next_batch_beam_task(
 BeamSearchBatchConfig
     RequestManager::prepare_next_batch_beam(BeamSearchBatchConfig const &old_bc,
                                             BeamInferenceResult const &result) {
-  const std::lock_guard<std::mutex> lock(request_queue_mutex);
+  std::lock_guard<std::mutex> const lock(request_queue_mutex);
   if (verbose) {
     std::cout << "\n############### prepare_next_batch_beam ###############\n";
   }
@@ -1340,7 +1354,7 @@ TreeVerifyBatchConfig RequestManager::prepare_next_batch_verify_task(
 
 TreeVerifyBatchConfig RequestManager::prepare_next_batch_verify(
     std::vector<BeamSearchBatchConfig> const &old_batches) {
-  const std::lock_guard<std::mutex> lock(request_queue_mutex);
+  std::lock_guard<std::mutex> const lock(request_queue_mutex);
 
   if (verbose) {
     std::cout
@@ -2393,7 +2407,9 @@ void RequestManager::serve_incr_decoding(FFModel *llm) {
 
   std::queue<std::pair<BatchConfigFuture, InferenceResultFuture>>
       batch_pipeline;
-  { batch_pipeline.push(std::make_pair(last_bcf, last_irf)); }
+  {
+    batch_pipeline.push(std::make_pair(last_bcf, last_irf));
+  }
 
   while (!is_background_server_terminated()) {
 
@@ -2520,7 +2536,7 @@ void RequestManager::serve_spec_infer(FFModel *llm) {
 
 void RequestManager::trigger_request_completion_future(
     RequestGuid const &guid) {
-  const std::lock_guard<std::mutex> lock(request_to_promise_mutex);
+  std::lock_guard<std::mutex> const lock(request_to_promise_mutex);
   assert(request_to_promise.find(guid) != request_to_promise.end());
   // Set the completion promise in case other threads are waiting
   request_to_promise[guid]->set_value();
